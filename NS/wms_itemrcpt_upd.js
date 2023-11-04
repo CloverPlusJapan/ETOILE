@@ -28,7 +28,7 @@ define(['/SuiteScripts/LIBRARY/common_lib.js', 'N/file', 'N/record', 'N/search',
 			// 対象のCSVファイルの存在チェック
 			let csvFile = '';
 			let mapJson = [];
-			
+			// test
 			// WMS上のバケットフォルダに未連携のCSVファイルが存在しなかった場合、空のリストを戻り値に設定して処理を終了する
 			if (common_lib.isEmpty(csvFile)) {
 				return [];
