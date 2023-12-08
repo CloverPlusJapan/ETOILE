@@ -1,12 +1,12 @@
 /**
  * 機能: WMS_出庫連携_プログラム
  * Author: CPC_宋
- * Date:2023/10/31
- * 
+ * Date:2023/11/14
+ *
  * @NApiVersion 2.1
  * @NScriptType MapReduceScript
  */
-define(['/SuiteScripts/LIBRARY/common_lib.js', 'N/file', 'N/record', 'N/search', 'N/format', "N/runtime", 'N/render' ],
+define(['/SuiteScripts/LIBRARY/common_server_lib.js', '/SuiteScripts/LIBRARY/common_lib.js', 'N/file', 'N/record', 'N/search', 'N/format', "N/runtime", 'N/render'],
     /**
      * @param {runtime}
      *            runtime
@@ -15,7 +15,7 @@ define(['/SuiteScripts/LIBRARY/common_lib.js', 'N/file', 'N/record', 'N/search',
      * @param {format}
      *            format
      */
-    (common_lib, file, record, search, format, runtime, render) => {
+    (common_server_lib, common_lib, file, record, search, format, runtime, render) => {
         /**
          * Defines the function that is executed at the beginning of the map/reduce process and generates the input data.
          * @param {Object} inputContext
@@ -30,171 +30,163 @@ define(['/SuiteScripts/LIBRARY/common_lib.js', 'N/file', 'N/record', 'N/search',
          */
         const getInputData = (inputContext) => {
 
-            // 対象のCSVファイルの存在チェック
-            let csvFileData = '';
-            let mapJson = [];
+            // パラメータ取得
+            let script = runtime.getCurrentScript();
 
-            // WMS上のバケットフォルダに未連携のCSVファイルが存在しなかった場合、空のリストを戻り値に設定して処理を終了する
-            if (common_lib.isEmpty(csvFile)) {
-                return [];
-            }
+            // CSVファイル
+            let csvFileId = script.getParameter({name: "custscript_itemship_update_csv_fileid"});
 
-            // CSVファイルのダウンロード
-            let csvFile = file.create({
-                name: 'csvName',
-                contents : JSON.stringify(poResults),
-                folder: csvFile,
-                fileType: 'CSV',
-                encoding: file.Encoding.UTF_8
-            });
+            let commonGetInput = common_server_lib.wmsGetInputData(csvFileId);
 
-            let csvFileId = csvFile.save();
+            return commonGetInput;
 
-            // ファイルをロードする
-            csvFile = file.load({
-                id : csvFileId,
-                encoding : file.Encoding.SHIFT_JIS,
-            });
-
-            // ファイル内容を取得する
-            let csvFileContents = csvFile.getContents();
-
-            // CSVデータをArrayに変換する
-            let csvFileToArray = common_lib.csvToArray(csvFileContents);
-
-            // CSVデータが存在する場合
-            if (csvFileToArray.length > 0) {
-
-                // アイテムマスタ取得
-                let infoDic = getItemJsonValue();
-
-                // 配送情報取得
-                let fulDic = getIfNoJsonValue();
-
-                // CSVデータ整理
-                let csvData = {};
-
-                for (let line = 0; line < csvFileToArray.length; line++) {
-
-                    if (!csvData.hasOwnProperty(csvFileToArray[line][2])) {
-                        // 配送番号
-                        csvData[csvFileToArray[line][2]] = new Array();
-                        // 配送データ
-                        csvData[csvFileToArray[line][2]].push(csvFileToArray[line]);
-                    } else {
-                        csvData[csvFileToArray[line][2]].push(csvFileToArray[line]);
-                    }
-
-                }
-
-                for ( let key in csvData) {
-                    // マスタチェック
-                    let itemFlag = false;
-
-                    // 配送データArray
-                    let ifDataAry = csvData[key];
-
-                    // 配送データ
-                    for (let x = 0; x < ifDataAry.length; x++) {
-                        let ifData = ifDataAry[x];
-
-                        // 類番
-                        let csvType = ifData[type];
-                        // 品番
-                        let csvNum = ifData[num];
-                        // カラー
-                        let csvColor = ifData[color];
-                        // サイズ
-                        let csvSize = ifData[size];
-
-                        let csvItemKey = csvType + '_' + csvNum + '_' + csvColor + '_' + csvSize;
-
-                        if (infoDic.hasOwnProperty(csvItemKey)) {
-                            itemFlag = true;
-
-                            // アイテム内部ID追加
-                            csvData[key][x].push(infoDic[csvItemKey]);
-                        }
-
-                        // 配送伝票
-                        let ifNo = key;
-                        // 配送伝票行No
-                        let ifNoLine = ifData[line];
-
-                        if (fulDic.hasOwnProperty(ifNo)) {
-                            if (fulDic[ifNo].indexOf(ifNoLine) && itemFlag) {
-
-                                // MAPJSON追加
-                                mapJson.push({
-                                    'itemFulNo' : {
-                                        'ifNo' : ifNo,
-                                        'value' : csvData[key]
-                                    }
-                                   });
-                            }
-                        }
-                    }
-                }
-            }
-            return mapJson;
         }
 
         /**
-         * Defines the function that is executed when the reduce entry point is triggered. This entry point is triggered
-         * automatically when the associated map stage is complete. This function is applied to each group in the provided context.
-         * @param {Object} reduceContext - Data collection containing the groups to process in the reduce stage. This parameter is
-         *     provided automatically based on the results of the map stage.
-         * @param {Iterator} reduceContext.errors - Serialized errors that were thrown during previous attempts to execute the
-         *     reduce function on the current group
-         * @param {number} reduceContext.executionNo - Number of times the reduce function has been executed on the current group
-         * @param {boolean} reduceContext.isRestarted - Indicates whether the current invocation of this function is the first
+         * Defines the function that is executed when the map entry point is triggered. This entry point is triggered automatically
+         * when the associated getInputData stage is complete. This function is applied to each key-value pair in the provided
+         * context.
+         * @param {Object} mapContext - Data collection containing the key-value pairs to process in the map stage. This parameter
+         *     is provided automatically based on the results of the getInputData stage.
+         * @param {Iterator} mapContext.errors - Serialized errors that were thrown during previous attempts to execute the map
+         *     function on the current key-value pair
+         * @param {number} mapContext.executionNo - Number of times the map function has been executed on the current key-value
+         *     pair
+         * @param {boolean} mapContext.isRestarted - Indicates whether the current invocation of this function is the first
          *     invocation (if true, the current invocation is not the first invocation and this function has been restarted)
-         * @param {string} reduceContext.key - Key to be processed during the reduce stage
-         * @param {List<String>} reduceContext.values - All values associated with a unique key that was passed to the reduce stage
-         *     for processing
+         * @param {string} mapContext.key - Key to be processed during the map stage
+         * @param {string} mapContext.value - Value to be processed during the map stage
          * @since 2015.2
          */
-        const reduce = (reducereduceContext) => {
 
-            // 値
-            let reduceContextJson = JSON.parse(reduceContext.value);
+        const map = (mapContext) => {
 
-            // 配送データ
-            let contItemFul = reduceContextJson['itemFulNo'];
+            const INTERNALID = 0;  // 内部ID
+            const SHNC = 1;  // アイテム
+            const HTTDNPGYON = 2;  // 行番号
+            const NYKKKTH = 3;  // 出庫確定日
+            const WMSNYKKKTN = 4;  // WMS仕切書番号
+            const NYKS = 5;  // 計算日
+
+            let appendType = 'itemful';
+
+            // パラメータ取得
+            let script = runtime.getCurrentScript();
+
+            // CSV作成内部ID 正常系
+            let saveFileId = script.getParameter({name: "custscript_itemship_update_save_fileid"});
+
+            // CSV作成内部ID 異常系
+            let errorFileId = script.getParameter({name: "custscript_itemship_update_error_fileid"});
+
+            // コンテキスト取得
+            let mapContextJson = JSON.parse(mapContext.value);
 
             // 配送No
-            let ifNo = contItemFul['ifNo'];
+            let itemfulfillmentNo = mapContextJson['internalid'];
 
-            // 配送データ
-            let value = contItemFul['value'];
+            // 配送Noデータ
+            let valueAry = mapContextJson['dataAry'];
 
-            // 配送取得
-            let ifRecord = record.load({
-                type : 'itemfulfillment',
-                id : ifNo,
-            });
+            // 検索条件
+            let filters = [
+                ['type', 'anyof', 'itemfulfillment'],
+                'AND',
+                ['mainline', 'is', 'F'],
+                'AND',
+                ['taxline', 'is', 'F'],
+                'AND',
+                ['internalid', 'anyof', itemfulfillmentNo],
+            ]
 
-            // 配送ヘッダ作成
-            ifRecord.setValue({
-                fieldId : 'tranid',
-                value : ifNo
+            // 配送伝票存在チェック
+            if (!common_lib.dataExists('itemfulfillment', filters)) {
 
-            });
+                common_server_lib.csvAppendLine(itemfulfillmentNo, valueAry, errorFileId, false, appendType, 'NUMBER_ISEMPTY');
 
-            // 配送明細作成
-            for (let z = 0; z < value.length; z++) {
-                let lineData = value[z];
-                let line = lineData['line'];
+            } else {
 
-                ifRecord.setSublistValue({
-                    sublistId: 'item',
-                    fieldId: 'custcol_sw_sales_inv_qty',
-                    line: line,
-                    value: invQty,
-                    ignoreFieldChange: true
+                // 保存フラグ
+                let saveFlag = true;
+
+                // アイテム取得
+                let itemAry = common_lib.getItemAryValue();
+
+                // 行番号取得
+                let lineAry = common_lib.getLineValue(itemfulfillmentNo, appendType);
+
+                // 配送取得
+                let itemfulRecord = record.load({
+                    type: 'itemfulfillment',
+                    id: itemfulfillmentNo,
                 });
+
+                // 明細データ作成
+                for (let lineNum = 0; lineNum < valueAry.length; lineNum++) {
+
+                    // アイテム存在チェック
+                    if (itemAry.indexOf(value[SHNC]) == -1) {
+
+                        saveFlag = false;
+                        common_server_lib.csvAppendLine(itemfulfillmentNo, valueAry, errorFileId, false, appendType, 'ITEM_ISEMPTY');
+                        break;
+                    }
+
+                    // 行番号存在チェック
+                    if (lineAry.indexOf(value[HTTDNPGYON]) == -1) {
+
+                        saveFlag = false;
+                        common_server_lib.csvAppendLine(itemfulfillmentNo, valueAry, errorFileId, false, appendType, 'LINE_ISEMPTY');
+                        break;
+                    }
+
+                    // 詳細データ
+                    let value = valueAry[lineNum];
+
+                    // 出庫確定日
+                    itemfulRecord.setSublistValue({
+                        sublistId: 'item',
+                        fieldId: 'custcol_departure_date',
+                        line: value[HTTDNPGYON],
+                        value: value[NYKKKTH],
+                        ignoreFieldChange: true
+                    });
+
+                    // アイテム
+                    itemfulRecord.setSublistValue({
+                        sublistId: 'item',
+                        fieldId: 'item',
+                        line: value[HTTDNPGYON],
+                        value: value[SHNC],
+                        ignoreFieldChange: true
+                    });
+
+                    // WMS仕切書番号
+                    itemfulRecord.setSublistValue({
+                        sublistId: 'item',
+                        fieldId: 'custcol_wms_partition_num',
+                        line: value[HTTDNPGYON],
+                        value: value[WMSNYKKKTN],
+                        ignoreFieldChange: true
+                    });
+
+                    // 計算日
+                    itemfulRecord.setSublistValue({
+                        sublistId: 'item',
+                        fieldId: 'custcol_calculation_day',
+                        line: value[HTTDNPGYON],
+                        value: value[NYKS],
+                        ignoreFieldChange: true
+                    });
+
+                }
+
+                // 配送作成
+                if (saveFlag) {
+                    itemfulRecord.save();
+                    common_server_lib.csvAppendLine(itemfulfillmentNo, valueAry, saveFileId, true, appendType);
+                }
             }
-            ifRecord.save();
         }
 
         /**
@@ -216,142 +208,31 @@ define(['/SuiteScripts/LIBRARY/common_lib.js', 'N/file', 'N/record', 'N/search',
          * @param {Object} summaryContext.reduceSummary - Statistics about the reduce stage
          * @since 2015.2
          */
-        const summarize = (summarysummaryContext) => {
+        const summarize = (summaryContext) => {
+
+            // パラメータ取得
             let script = runtime.getCurrentScript();
+
+            // CSV作成内部ID 正常系
+            let saveFileId = script.getParameter({name: "custscript_itemship_update_save_fileid"});
+
+            // CSV作成内部ID 異常系
+            let errorFileId = script.getParameter({name: "custscript_itemship_update_error_fileid"});
+
+            // スクリプトID
             let script_id = script.id;
-            let param_email_author = script.getParameter({name: "email_author_bl"});
-            let param_email_recipients = script.getParameter({name: "email_recipients"});
 
-            let inputSummary = summaryContext.inputSummary;
-            let mapSummary = summaryContext.mapSummary;
-            let reduceSummary = summaryContext.reduceSummary;
+            // 受信者
+            let param_email_author = script.getParameter({name: "custscript_itemship_mail_author"});
+            let param_email_recipients = script.getParameter({name: "custscript_itemship_mail_recipients"});
 
-            if (inputSummary.error) {
-                //　エラー処理
-                common_lib.handleErrorIfAny(summaryContext);
-
-                let errorObj = error.create({
-                    name: 'INPUT_STAGE_FAILED',
-                    message: inputSummary.error,
-                    notifyOff: false
-                });
-                throw errorObj;
-            }
-
-            let errorName = '';
-            let errorMsg = [];
-            mapSummary.errors.iterator().each(function(key, value){
-                let msg = 'param key: ' + key + '. Error message: ' + JSON.parse(value).message + '\n';
-                errorMsg.push(msg);
-                errorName = 'MAP_TRANSFORM_FAILED'
-                return true;
-            });
-
-            reduceSummary.errors.iterator().each(function(key, value){
-                let msg = 'param key: ' + key + '. Error message: ' + JSON.parse(value).message + '\n';
-                errorMsg.push(msg);
-                errorName = 'RECORD_TRANSFORM_FAILED'
-                return true;
-            });
-
-            if (errorMsg.length > 0)
-            {
-                //　エラー処理
-                common_lib.handleErrorIfAny(summaryContext);
-                let errorObj = error.create({
-                    name: errorName,
-                    message: JSON.stringify(errorMsg),
-                    notifyOff: false
-                });
-                throw errorObj;
-            }
+            common_server_lib.fileEmptyToDelete(saveFileId, errorFileId);
+            common_lib.handleErrorIfAny(summaryContext);
         }
 
-        /**
-         * アイテムマスタ取得
-         * @return {(Object)} アイテム内部ID:類番,品番,カラー,サイズ
-         */
-        function getItemJsonValue() {
-            let infoDic = {};
-            let itemSearch = "item";
-            let itemFilters = [];
-            let itemSearchObj = [search.createColumn({
-                name : "internalid",
-                label : "内部ID"
-            }),search.createColumn({
-                name : "type",
-                label : "類番"
-            }),search.createColumn({
-                name : "num",
-                label : "品番"
-            }),search.createColumn({
-                name : "color",
-                label : "カラー"
-            }),search.createColumn({
-                name : "size",
-                label : "サイズ"
-            })];
-            let itemSearchResults = common_lib.getSearchdata(itemSearch, itemFilters, searchColumns);
-            if (itemSearchResults && itemSearchResults.length > 0) {
-                 for (let i = 0; i < itemSearchResults.length; i++) {
-                     let tmpResult = itemSearchResults[i];
-                     // 類番
-                     let type = tmpResult.getValue(searchColumns[0]);
-                     // 品番
-                     let num = tmpResult.getValue(searchColumns[1]);
-                     // カラー
-                     let color = tmpResult.getValue(searchColumns[2]);
-                     // サイズ
-                     let size = tmpResult.getValue(searchColumns[3]);
-
-                     let itemArr = new Array();
-                     let itemKey = type + '_' + num + '_' + color + '_' + size;
-                     infoDic[itemKey] = itemId;
-
-                 }
-            }
-            return infoDic;
-        }
-
-        /**
-         * 受領書情報取得
-         * @return {(Object)} 受領書対応ライン番号
-         */
-        function getIfNoJsonValue() {
-            let fulDic = {};
-            let itemRcptSearch = "itemreceipt";
-            let itemRcptFilters = [];
-            itemRcptFilters.push(["type",'anyof',"ItemRcpt"]);
-            itemRcptFilters.push(["AND"]);
-            itemRcptFilters.push(["trackingnumber","isnotempty",""]);
-            let itemRcptSearchObj = [search.createColumn({
-                name : "trackingnumbers",
-                label : "受領書No"
-            }),search.createColumn({
-                name : "",
-                label : "受領書行番号"
-            })];
-            let itemRcptSearchResults = createSearch(itemRcptSearch, itemRcptFilters, searchColumns);
-            if (itemRcptSearchResults && itemRcptSearchResults.length > 0) {
-                let fulDic = {};
-                for (let i = 0; i < itemRcptSearchResults.length; i++) {
-                     let fulResult = itemRcptSearchResults[i];
-                     let itemFulNo = fulResult.getValue(searchColumns[0]);
-                     let itemFulLine = fulResult.getValue(searchColumns[1]);
-
-                     let itemFulArr = new Array();
-                     itemFulArr.push([itemFulLine]);
-                     fulDic[itemFulNo] = new Array();
-                     fulDic[itemFulNo].push(itemFulArr);
-
-                }
-            }
-            return fulDic;
-        }
-        
         return {
             getInputData: getInputData,
-            reduce: reduce,
+            map: map,
             summarize: summarize
         }
     }
